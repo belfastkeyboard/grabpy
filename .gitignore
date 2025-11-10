@@ -1,4 +1,6 @@
 .venv/
 .idea/
+dist/
+grabpy.egg-info/
 
 *__pycache__*
