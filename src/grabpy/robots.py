@@ -24,7 +24,7 @@ class RobotsParser:
         return f'{scheme}://{netloc}'
 
     @lru_cache(maxsize=128, typed=True)
-    def _get_parser(self, url: str) -> RobotFileParser:
+    def get_parser(self, url: str) -> RobotFileParser:
         base = self._extract_url_base(url)
         url = urllib.parse.urljoin(base, 'robots.txt')
 
@@ -34,27 +34,9 @@ class RobotsParser:
 
         return rp
 
-    def _can_scrape(self, parser: RobotFileParser, url: str) -> bool:
+    def can_scrape(self, parser: RobotFileParser, url: str) -> bool:
         return parser.can_fetch(self.useragent, url)
 
-    def _scrape_delay(self, parser: RobotFileParser) -> None:
+    def scrape_delay(self, parser: RobotFileParser) -> float:
         delay = parser.crawl_delay(self.useragent)
-
-        if not delay:
-            return
-
-        time.sleep(float(delay))
-
-    def be_respectful(self, url: str) -> bool:
-        try:
-            parser = self._get_parser(url)
-        except ValueError as err:
-            print(err, file=sys.stderr)
-            return False
-
-        if not self._can_scrape(parser, url):
-            return False
-
-        self._scrape_delay(parser)
-
-        return True
+        return float(0 if not delay else delay)
