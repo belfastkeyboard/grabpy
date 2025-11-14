@@ -1,8 +1,10 @@
 from requests import Response
 import requests
-import sys
-import time
 import os
+import time
+from typing import Callable, IO
+from threading import Thread
+from queue import Queue
 
 
 class Requester:
@@ -26,98 +28,144 @@ class Requester:
             return str(i)
 
     @staticmethod
-    def _get_content_length(response: Response) -> int:
-        return int(response.headers.get('Content-Length', '0'))
+    def _get_chunk_size(content_length: int | None) -> int:
+        mb = 1024 * 1024
+
+        if not content_length:
+            return 1 * mb
+
+        return max(1 * mb, min(content_length // 100, 16 * mb))
 
     @staticmethod
-    def request(func):
-        def wrapper(*args, **kwargs):
-            delay = kwargs.get('delay', 0)
+    def _request(
+        callback: Callable,
+        retries: int,
+        delay: float,
+        url: str,
+        stream: bool,
+        timeout: float | tuple[int, int],
+        headers: dict[str, str]
+    ) -> Response | None:
+        """All requests go through this function which respects the wishes of the robots file"""
+
+        ok: int = 206 if stream else 200
+        not_found: int = 404
+
+        while retries:
             time.sleep(delay)
-            return func(*args, **kwargs)
-        return wrapper
 
-    @request
-    def fetch(self, url: str, delay: float = 0) -> bytes:
-        retries: int = self.retries
+            response: Response = callback(url, stream=stream, timeout=timeout, headers=headers)
 
-        while retries:
+            if response.status_code == ok:
+                return response
+
+            if response.status_code == not_found:
+                raise FileNotFoundError
+
+            retries -= 1
+            delay = (delay + 1) * 2
+
+        return None
+
+    @staticmethod
+    def _iter_content(response: Response, content_size: int, chunk_size: int) -> bytes:
+        acquired: int = 0
+
+        while acquired < content_size:
             try:
-                response = requests.get(url)
-                response.raise_for_status()
-            except requests.exceptions.RequestException as err:
-                print(err, file=sys.stderr)
+                for chunk in response.iter_content(chunk_size=chunk_size):
+                    if not chunk:
+                        continue
 
-                if err.response.status_code == 404:
-                    break
+                    acquired += len(chunk)
 
-                if retries := retries - 1:
-                    delay = (delay + 1) * 2
-                    time.sleep(delay)
-            else:
-                return response.content
+                    yield chunk
+            except requests.exceptions.ChunkedEncodingError:
+                chunk_size //= 2
 
-        return b''
+    @staticmethod
+    def _get_content_ranges(content_length: int, chunk_size: int):
+        end: int = -1
+        limit: int = content_length - 1
 
-    @request
-    def stream(self, url: str, delay: float = 0, fp: str = '', rate: int = 0) -> bytes:
-        retries = self.retries
-        current_chunk_size = rate
+        while end < limit:
+            start = end + 1
+            end = min(start + chunk_size, limit)
 
-        while retries:
-            existing = os.path.getsize(fp) if os.path.exists(fp) else 0
-            headers = {'Range': f'bytes={existing}-', 'Connection': 'close'}
+            yield start, end
 
-            try:
-                response = requests.get(url, stream=True, timeout=(5, 60), headers=headers)
+    def _get_content_length(self, delay: float, url: str) -> int | None:
+        response: Response = self._request(requests.head, self.retries, delay, url, False, 10, {})
 
-                if response.status_code == 404:
-                    break
+        if not response:
+            return None
 
-                response.raise_for_status()
+        return int(response.headers.get('Content-Length'))
 
-                run = 0
-                grabbed = 0
-                length = self._get_content_length(response)
-            except requests.exceptions.RequestException as err:
-                if self.verbose:
-                    print(err, file=sys.stderr)
+    def fetch(self, url: str, delay: float) -> bytes:
+        response: Response = self._request(requests.get, self.retries, delay, url, False, 10, {})
+        return response.content if response else b''
 
-                if retries := retries - 1:
-                    delay = (delay + 1) * 2
-                    time.sleep(delay)
-            else:
-                try:
-                    for chunk in response.iter_content(chunk_size=current_chunk_size):
-                        if not chunk:
-                            continue
+    @staticmethod
+    def chunk_list(lst, n):
+        size = len(lst) // n
+        remainder = len(lst) % n
 
-                        grabbed += len(chunk)
+        chunks = []
+        start = 0
 
-                        if self.verbose:
-                            gr = self._int_to_unit(grabbed)
-                            ln = self._int_to_unit(length)
-                            rt = self._int_to_unit(rate)
-                            print(f'\r{gr} / {ln}   {rt}', end='', flush=True)
+        for i in range(n):
+            extra = 1 if i < remainder else 0
+            end = start + size + extra
+            chunks.append(lst[start:end])
+            start = end
 
-                        if current_chunk_size < rate:
-                            run += 1
+        return chunks
 
-                            if run >= 100:
-                                current_chunk_size *= 2
+    def _download_worker(self, output_queue: Queue, range_data: list, chunk_size: int, url: str, delay: float) -> None:
+        for start, end in range_data:
+            headers = {'Range': f'bytes={start}-{end}', 'Connection': 'close'}
+            response: Response = self._request(
+                requests.get,
+                self.retries,
+                delay,
+                url,
+                True,
+                (10, 60),
+                headers
+            )
 
-                        yield chunk
-                except requests.exceptions.ChunkedEncodingError as err:
-                    if self.verbose:
-                        print(err, file=sys.stderr)
+            result = b''
 
-                    rate //= 2
-                except requests.exceptions.ConnectionError as err:
-                    if self.verbose:
-                        print(err, file=sys.stderr)
+            for chunk in self._iter_content(response, end - start, chunk_size // 4):
+                result += chunk
 
-                    if retries := retries - 1:
-                        delay = (delay + 1) * 2
-                        time.sleep(delay)
-                else:
-                    break
+            output_queue.put((start, result))
+
+    def stream(self, url: str, delay: float, file: IO) -> None:
+        if not file.seekable():
+            raise OSError(f'File "{file}" not seekable')
+
+        content_length = self._get_content_length(delay, url)
+        chunk_size = self._get_chunk_size(content_length)
+        ranges = list(self._get_content_ranges(content_length, chunk_size))
+        thread_count: int = (os.cpu_count() or 1) * 2
+        range_chunks = self.chunk_list(ranges, thread_count)
+        results = Queue()
+        threads = []
+
+        for i in range(thread_count):
+            chunk_list = range_chunks[i]
+            t = Thread(target=self._download_worker, args=(results, chunk_list, chunk_size, url, delay))
+            threads.append(t)
+            t.start()
+
+        file.truncate(content_length)
+
+        for _ in range(len(ranges)):
+            offset, chunk = results.get()
+            file.seek(offset)
+            file.write(chunk)
+
+        for t in threads:
+            t.join()

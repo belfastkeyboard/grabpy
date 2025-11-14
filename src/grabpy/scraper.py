@@ -1,6 +1,8 @@
 from .request import Requester
 from .robots import RobotsParser
 from functools import lru_cache
+from uuid import uuid4
+import shutil
 
 
 class Grabber:
@@ -27,19 +29,18 @@ class Grabber:
 
         return self.requester.fetch(url, delay=delay)
 
-    def download(self, url: str, fp: str, rate: int = 524288) -> bool:
+    def download(self, url: str, fp: str) -> bool:
         parser = self.robots_parser.get_parser(url)
 
         if not self.robots_parser.can_scrape(parser, url):
             return False
 
         delay: float = self.robots_parser.scrape_delay(parser)
+        temp: str = f'{uuid4()}.parts'
 
-        try:
-            with open(fp, 'wb') as f:
-                for chunk in self.requester.stream(url, delay=delay, fp=fp, rate=rate):
-                    f.write(chunk)
-        except FileNotFoundError:
-            raise
+        with open(temp, 'wb') as f:
+            self.requester.stream(url, delay, f)
+
+        shutil.move(temp, fp)
 
         return True
