@@ -81,7 +81,10 @@ class Requester:
                     acquired += len(chunk)
 
                     yield chunk
-            except requests.exceptions.ChunkedEncodingError:
+            except (
+                requests.exceptions.ChunkedEncodingError,
+                requests.exceptions.ConnectionError
+            ):
                 chunk_size //= 2
 
     @staticmethod
