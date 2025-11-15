@@ -54,16 +54,17 @@ class Requester:
         while retries:
             time.sleep(delay)
 
-            response: Response = callback(url, stream=stream, timeout=timeout, headers=headers)
+            try:
+                response: Response = callback(url, stream=stream, timeout=timeout, headers=headers)
+            except requests.exceptions.Timeout:
+                retries -= 1
+                delay = (delay + 1) * 2
+            else:
+                if response.status_code == ok:
+                    return response
 
-            if response.status_code == ok:
-                return response
-
-            if response.status_code == not_found:
-                raise FileNotFoundError
-
-            retries -= 1
-            delay = (delay + 1) * 2
+                if response.status_code == not_found:
+                    raise FileNotFoundError
 
         return None
 
