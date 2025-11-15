@@ -1,5 +1,4 @@
 import logging
-
 from .request import Requester
 from .robots import RobotsParser
 from .exception import GrabpyException
@@ -17,8 +16,8 @@ class Grabber:
     def __enter__(self) -> 'Grabber':
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        return
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        return True
 
     @lru_cache(maxsize=8, typed=True)
     def get(self, url: str) -> bytes:
