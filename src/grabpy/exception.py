@@ -33,6 +33,16 @@ class FileError(GrabpyException):
         return f'[{self.file.name}] {self.message}'
 
 
+class DiskError(GrabpyException):
+    """File Exception class for Grabpy package."""
+
+    def __init__(self) -> None:
+        super().__init__('Not enough space on disk.')
+
+    def __str__(self) -> str:
+        return self.message
+
+
 class HTTPStatusError(HTTPError):
     """HTTP Exception Status class for Grabpy package."""
 
