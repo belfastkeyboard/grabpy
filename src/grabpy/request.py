@@ -205,7 +205,5 @@ class Requester:
         except GrabpyException as err:
             logger.error('Failed downloading "%s": %s', url, err)
             raise
-        except OSError as err:
-            logger.error(err)
 
         logger.info(f'Downloaded "%s".', url)
