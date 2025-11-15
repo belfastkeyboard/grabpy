@@ -1,7 +1,7 @@
 import logging
 from functools import lru_cache
 
-from .exception import GrabpyException
+from .exception import GrabpyException, HTTPStreamingError
 from .io import FileParts
 from .request import Requester
 from .robots import RobotsParser
@@ -44,6 +44,9 @@ class Grabber:
 
             with FileParts(fp, content_length) as file:
                 for offset, chunk in self.requester.stream(url, content_length, delay):
+                    if offset is None:
+                        raise HTTPStreamingError(url, chunk)
+
                     file.write(offset, chunk)
         except GrabpyException as err:
             logging.error('%s', err)

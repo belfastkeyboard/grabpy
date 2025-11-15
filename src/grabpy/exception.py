@@ -79,3 +79,14 @@ class HTTPNotFoundError(HTTPStatusError):
     def __init__(self, url: str) -> None:
         super().__init__('Not found.', url, 404)
 
+
+class HTTPStreamingError(HTTPError):
+    """Exception raised when streaming fails critically."""
+
+    def __init__(self, url: str, chunk: tuple[int, int]) -> None:
+        super().__init__(f'Streaming chunk [{chunk[0]}:{chunk[1]}] failed.', url)
+        self.chunk = chunk
+
+    def __str__(self) -> str:
+        return f'[{self.url}] {self.message}'
+

@@ -2,16 +2,17 @@ import logging
 import os
 import time
 from queue import Queue, Empty
-from threading import Thread
+from threading import Thread, Event
 from typing import Callable
 
 import requests
 from requests import Response
-from requests.exceptions import ChunkedEncodingError, ConnectionError, StreamConsumedError, Timeout
+from requests.exceptions import ChunkedEncodingError, ConnectionError, Timeout
 
 from .exception import GrabpyException, HTTPError, HTTPNotFoundError, HTTPTimeoutError
 
 logger = logging.getLogger(__name__)
+stop_streaming = Event()
 
 
 class Requester:
@@ -109,7 +110,7 @@ class Requester:
         return count, queue
 
     def _download_worker(self, output: Queue, ranges: Queue, chunk_size: int, url: str, delay: float) -> None:
-        while True:
+        while not stop_streaming.is_set():
             try:
                 start, end = ranges.get_nowait()
             except Empty:
@@ -118,15 +119,21 @@ class Requester:
             logger.debug('Streaming "%s" [%ld:%ld]', url, start, end)
 
             headers = {'Range': f'bytes={start}-{end}', 'Connection': 'close'}
-            response: Response = self._request(
-                requests.get,
-                self.retries,
-                delay,
-                url,
-                True,
-                (10, 60),
-                headers
-            )
+
+            try:
+                response: Response = self._request(
+                    requests.get,
+                    self.retries,
+                    delay,
+                    url,
+                    True,
+                    (10, 60),
+                    headers
+                )
+            except HTTPError:
+                stop_streaming.set()
+                output.put((None, (start, end)))
+                break
 
             result = b''
 
@@ -184,6 +191,8 @@ class Requester:
             thread_count: int = (os.cpu_count() or 1) * 2
             results = Queue()
             threads = []
+
+            stop_streaming.clear()
 
             for i in range(thread_count):
                 t = Thread(target=self._download_worker, args=(results, ranges, chunk_size, url, delay))
