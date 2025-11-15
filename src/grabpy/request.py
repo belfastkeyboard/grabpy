@@ -1,13 +1,15 @@
-from .exception import GrabpyException, HTTPError, FileNotSeekableError, HTTPTimeoutError, HTTPNotFoundError
-from requests import Response
-from requests.exceptions import ChunkedEncodingError, ConnectionError, Timeout, StreamConsumedError
-from typing import Callable, IO
-from threading import Thread
-from queue import Queue
-import requests
+import logging
 import os
 import time
-import logging
+from queue import Queue
+from threading import Thread
+from typing import Callable
+
+import requests
+from requests import Response
+from requests.exceptions import ChunkedEncodingError, ConnectionError, StreamConsumedError, Timeout
+
+from .exception import GrabpyException, HTTPError, HTTPNotFoundError, HTTPTimeoutError
 
 logger = logging.getLogger(__name__)
 

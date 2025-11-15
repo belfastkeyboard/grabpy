@@ -1,9 +1,10 @@
 import logging
-from .request import Requester
-from .robots import RobotsParser
+from functools import lru_cache
+
 from .exception import GrabpyException
 from .io import FileParts
-from functools import lru_cache
+from .request import Requester
+from .robots import RobotsParser
 
 
 class Grabber:

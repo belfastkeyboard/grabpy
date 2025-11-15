@@ -1,8 +1,6 @@
-from urllib.robotparser import RobotFileParser
 import urllib.parse
-import time
 from functools import lru_cache
-import sys
+from urllib.robotparser import RobotFileParser
 
 
 class RobotsParser:

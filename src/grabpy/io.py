@@ -1,6 +1,7 @@
-from tempfile import NamedTemporaryFile
-from .exception import FileNotSeekableError, DiskError
 import os
+from tempfile import NamedTemporaryFile
+
+from .exception import DiskError, FileNotSeekableError
 
 
 class FileParts:
