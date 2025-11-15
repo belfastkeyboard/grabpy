@@ -1,10 +1,10 @@
+import logging
+
 from .request import Requester
 from .robots import RobotsParser
 from .exception import GrabpyException
+from .io import FileParts
 from functools import lru_cache
-from uuid import uuid4
-import shutil
-import os
 
 
 class Grabber:
@@ -38,18 +38,15 @@ class Grabber:
             return False
 
         delay: float = self.robots_parser.scrape_delay(parser)
-        temp: str = f'{uuid4()}.parts'
-        succeeded: bool = True
 
-        with open(temp, 'wb') as f:
-            try:
-                self.requester.stream(url, delay, f)
-            except GrabpyException:
-                succeeded = False
+        try:
+            content_length: int = self.requester.get_content_length(url, delay)
 
-        if not succeeded:
-            os.remove(temp)
+            with FileParts(fp, content_length) as file:
+                for offset, chunk in self.requester.stream(url, content_length, delay):
+                    file.write(offset, chunk)
+        except GrabpyException as err:
+            logging.error('%s', err)
             return False
         else:
-            shutil.move(temp, fp)
             return True
