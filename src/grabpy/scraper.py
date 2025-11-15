@@ -39,14 +39,17 @@ class Grabber:
 
         delay: float = self.robots_parser.scrape_delay(parser)
         temp: str = f'{uuid4()}.parts'
+        succeeded: bool = True
 
         with open(temp, 'wb') as f:
             try:
                 self.requester.stream(url, delay, f)
             except GrabpyException:
-                os.remove(temp)
-                return False
-            else:
-                shutil.move(temp, fp)
+                succeeded = False
 
-        return True
+        if not succeeded:
+            os.remove(temp)
+            return False
+        else:
+            shutil.move(temp, fp)
+            return True
