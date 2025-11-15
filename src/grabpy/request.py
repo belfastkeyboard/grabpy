@@ -1,7 +1,7 @@
 import logging
 import os
 import time
-from queue import Queue
+from queue import Queue, Empty
 from threading import Thread
 from typing import Callable
 
@@ -82,52 +82,39 @@ class Requester:
         raise HTTPTimeoutError(url, timeout)
 
     @staticmethod
-    def _iter_content(response: Response, content_size: int, chunk_size: int) -> bytes:
-        acquired: int = 0
+    def _iter_content(response: Response, chunk_size: int) -> bytes:
+        try:
+            for chunk in response.iter_content(chunk_size=chunk_size):
+                if not chunk:
+                    continue
 
-        while acquired < content_size:
-            try:
-                for chunk in response.iter_content(chunk_size=chunk_size):
-                    if not chunk:
-                        continue
-
-                    acquired += len(chunk)
-
-                    yield chunk
-            except (ChunkedEncodingError, ConnectionError):
-                chunk_size //= 2
-            except StreamConsumedError as err:
-                logger.exception('%s', err)
+                yield chunk
+        except (ChunkedEncodingError, ConnectionError) as err:
+            logger.exception('%s', err)
+            raise
 
     @staticmethod
-    def _get_content_ranges(content_length: int | None, chunk_size: int):
+    def _get_content_ranges(content_length: int | None, chunk_size: int) -> tuple[int, Queue]:
+        queue = Queue()
         end: int = -1
         limit: int = content_length - 1
+        count: int = 0
 
         while end < limit:
             start = end + 1
             end = min(start + chunk_size, limit)
+            count += 1
+            queue.put((start, end))
 
-            yield start, end
+        return count, queue
 
-    @staticmethod
-    def chunk_list(lst, n):
-        size = len(lst) // n
-        remainder = len(lst) % n
+    def _download_worker(self, output: Queue, ranges: Queue, chunk_size: int, url: str, delay: float) -> None:
+        while True:
+            try:
+                start, end = ranges.get_nowait()
+            except Empty:
+                break
 
-        chunks = []
-        start = 0
-
-        for i in range(n):
-            extra = 1 if i < remainder else 0
-            end = start + size + extra
-            chunks.append(lst[start:end])
-            start = end
-
-        return chunks
-
-    def _download_worker(self, output_queue: Queue, range_data: list, chunk_size: int, url: str, delay: float) -> None:
-        for start, end in range_data:
             logger.debug('Streaming "%s" [%ld:%ld]', url, start, end)
 
             headers = {'Range': f'bytes={start}-{end}', 'Connection': 'close'}
@@ -143,10 +130,16 @@ class Requester:
 
             result = b''
 
-            for chunk in self._iter_content(response, end - start, chunk_size // 4):
-                result += chunk
+            try:
+                for chunk in self._iter_content(response, chunk_size // 4):
+                    result += chunk
 
-            output_queue.put((start, result))
+                output.put((start, result))
+            except ChunkedEncodingError:
+                chunk_size = max(512 * 4, chunk_size // 2)
+                ranges.put((start, end))
+            except ConnectionError:
+                ranges.put((start, end))
 
     def get_content_length(self, url: str, delay: float) -> int:
         try:
@@ -187,19 +180,17 @@ class Requester:
 
         try:
             chunk_size = self._get_chunk_size(content_length)
-            ranges = list(self._get_content_ranges(content_length, chunk_size))
+            count, ranges = self._get_content_ranges(content_length, chunk_size)
             thread_count: int = (os.cpu_count() or 1) * 2
-            range_chunks = self.chunk_list(ranges, thread_count)
             results = Queue()
             threads = []
 
             for i in range(thread_count):
-                chunk_list = range_chunks[i]
-                t = Thread(target=self._download_worker, args=(results, chunk_list, chunk_size, url, delay))
+                t = Thread(target=self._download_worker, args=(results, ranges, chunk_size, url, delay))
                 threads.append(t)
                 t.start()
 
-            for _ in range(len(ranges)):
+            for _ in range(count):
                 yield results.get()
 
             for t in threads:
