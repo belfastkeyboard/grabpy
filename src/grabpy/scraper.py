@@ -1,16 +1,18 @@
 from .request import Requester
 from .robots import RobotsParser
+from .exception import GrabpyException
 from functools import lru_cache
 from uuid import uuid4
 import shutil
+import os
 
 
 class Grabber:
-    def __init__(self, useragent: str, retries: int = 3, verbose: bool = False) -> None:
+    def __init__(self, useragent: str, retries: int = 3) -> None:
         """Set retries to -1 to retry indefinitely"""
 
         self.robots_parser = RobotsParser(useragent)
-        self.requester = Requester(retries, verbose)
+        self.requester = Requester(retries)
 
     def __enter__(self) -> 'Grabber':
         return self
@@ -39,8 +41,12 @@ class Grabber:
         temp: str = f'{uuid4()}.parts'
 
         with open(temp, 'wb') as f:
-            self.requester.stream(url, delay, f)
-
-        shutil.move(temp, fp)
+            try:
+                self.requester.stream(url, delay, f)
+            except GrabpyException:
+                os.remove(temp)
+                return False
+            else:
+                shutil.move(temp, fp)
 
         return True

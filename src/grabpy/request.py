@@ -1,16 +1,20 @@
+from .exception import GrabpyException, HTTPError, FileNotSeekableError, HTTPTimeoutError, HTTPNotFoundError
 from requests import Response
-import requests
-import os
-import time
+from requests.exceptions import ChunkedEncodingError, ConnectionError, Timeout
 from typing import Callable, IO
 from threading import Thread
 from queue import Queue
+import requests
+import os
+import time
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class Requester:
-    def __init__(self, retries: int, verbose: bool):
+    def __init__(self, retries: int):
         self.retries = retries
-        self.verbose = verbose
 
     @staticmethod
     def _int_to_unit(i: int) -> str:
@@ -43,9 +47,9 @@ class Requester:
         delay: float,
         url: str,
         stream: bool,
-        timeout: float | tuple[int, int],
+        timeout: float | tuple[float, float],
         headers: dict[str, str]
-    ) -> Response | None:
+    ) -> Response:
         """All requests go through this function which respects the wishes of the robots file"""
 
         ok: int = 206 if stream else 200
@@ -56,17 +60,24 @@ class Requester:
 
             try:
                 response: Response = callback(url, stream=stream, timeout=timeout, headers=headers)
-            except requests.exceptions.Timeout:
+            except Timeout:
                 retries -= 1
                 delay = (delay + 1) * 2
+
+                logger.debug(
+                    'Timed out. "%s" %ld %ld',
+                    url,
+                    retries,
+                    delay
+                )
             else:
                 if response.status_code == ok:
                     return response
 
                 if response.status_code == not_found:
-                    raise FileNotFoundError
+                    raise HTTPNotFoundError(url)
 
-        return None
+        raise HTTPTimeoutError(url, timeout)
 
     @staticmethod
     def _iter_content(response: Response, content_size: int, chunk_size: int) -> bytes:
@@ -81,14 +92,11 @@ class Requester:
                     acquired += len(chunk)
 
                     yield chunk
-            except (
-                requests.exceptions.ChunkedEncodingError,
-                requests.exceptions.ConnectionError
-            ):
+            except (ChunkedEncodingError, ConnectionError):
                 chunk_size //= 2
 
     @staticmethod
-    def _get_content_ranges(content_length: int, chunk_size: int):
+    def _get_content_ranges(content_length: int | None, chunk_size: int):
         end: int = -1
         limit: int = content_length - 1
 
@@ -98,17 +106,21 @@ class Requester:
 
             yield start, end
 
-    def _get_content_length(self, delay: float, url: str) -> int | None:
-        response: Response = self._request(requests.head, self.retries, delay, url, False, 10, {})
-
-        if not response:
-            return None
+    def _get_content_length(self, delay: float, url: str) -> int:
+        try:
+            response: Response = self._request(
+                requests.head,
+                self.retries,
+                delay,
+                url,
+                False,
+                10,
+                {}
+            )
+        except HTTPError:
+            raise
 
         return int(response.headers.get('Content-Length'))
-
-    def fetch(self, url: str, delay: float) -> bytes:
-        response: Response = self._request(requests.get, self.retries, delay, url, False, 10, {})
-        return response.content if response else b''
 
     @staticmethod
     def chunk_list(lst, n):
@@ -126,8 +138,15 @@ class Requester:
 
         return chunks
 
+    @staticmethod
+    def _ensure_file_is_seekable(file: IO) -> None:
+        if not file.seekable():
+            raise FileNotSeekableError(file)
+
     def _download_worker(self, output_queue: Queue, range_data: list, chunk_size: int, url: str, delay: float) -> None:
         for start, end in range_data:
+            logger.debug('Streaming "%s" [%ld:%ld]', url, start, end)
+
             headers = {'Range': f'bytes={start}-{end}', 'Connection': 'close'}
             response: Response = self._request(
                 requests.get,
@@ -146,30 +165,55 @@ class Requester:
 
             output_queue.put((start, result))
 
+    def fetch(self, url: str, delay: float) -> bytes:
+        logger.info('Fetching "%s".', url)
+
+        try:
+            response: Response = self._request(
+                requests.get,
+                self.retries,
+                delay,
+                url,
+                False,
+                10,
+                {})
+        except HTTPError as err:
+            logger.error('Failed fetching "%s": %s', url, err)
+            raise
+
+        return response.content if response else b''
+
     def stream(self, url: str, delay: float, file: IO) -> None:
-        if not file.seekable():
-            raise OSError(f'File "{file}" not seekable')
+        logger.info('Downloading "%s".', url)
 
-        content_length = self._get_content_length(delay, url)
-        chunk_size = self._get_chunk_size(content_length)
-        ranges = list(self._get_content_ranges(content_length, chunk_size))
-        thread_count: int = (os.cpu_count() or 1) * 2
-        range_chunks = self.chunk_list(ranges, thread_count)
-        results = Queue()
-        threads = []
+        try:
+            self._ensure_file_is_seekable(file)
 
-        for i in range(thread_count):
-            chunk_list = range_chunks[i]
-            t = Thread(target=self._download_worker, args=(results, chunk_list, chunk_size, url, delay))
-            threads.append(t)
-            t.start()
+            content_length = self._get_content_length(delay, url)
+            chunk_size = self._get_chunk_size(content_length)
+            ranges = list(self._get_content_ranges(content_length, chunk_size))
+            thread_count: int = (os.cpu_count() or 1) * 2
+            range_chunks = self.chunk_list(ranges, thread_count)
+            results = Queue()
+            threads = []
 
-        file.truncate(content_length)
+            for i in range(thread_count):
+                chunk_list = range_chunks[i]
+                t = Thread(target=self._download_worker, args=(results, chunk_list, chunk_size, url, delay))
+                threads.append(t)
+                t.start()
 
-        for _ in range(len(ranges)):
-            offset, chunk = results.get()
-            file.seek(offset)
-            file.write(chunk)
+            file.truncate(content_length)
 
-        for t in threads:
-            t.join()
+            for _ in range(len(ranges)):
+                offset, chunk = results.get()
+                file.seek(offset)
+                file.write(chunk)
+
+            for t in threads:
+                t.join()
+        except GrabpyException as err:
+            logger.error('Failed downloading "%s": %s', url, err)
+            raise
+
+        logger.info(f'Downloaded "%s".', url)
