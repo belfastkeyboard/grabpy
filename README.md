@@ -10,6 +10,6 @@ How to enable logging for this package.
 import logging
 
 logging.basicConfig(level=logging.DEBUG)
-logging.getLogger('Grabpy').setLevel(logging.DEBUG)
+logging.getLogger('grabpy').setLevel(logging.DEBUG)
 logging.getLogger().setLevel(logging.WARNING)
 ```
