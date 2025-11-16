@@ -7,7 +7,7 @@ from typing import Callable
 
 from requests import Response, Session
 from requests.adapters import HTTPAdapter
-from requests.exceptions import ChunkedEncodingError, ConnectionError, Timeout
+from requests.exceptions import ChunkedEncodingError, ConnectionError, Timeout, RetryError
 from urllib3.util.retry import Retry
 
 from .exception import GrabpyException, HTTPError, HTTPNotFoundError, HTTPTimeoutError
@@ -60,7 +60,6 @@ class Requester:
     @staticmethod
     def _request(
         callback: Callable,
-        session: Session,
         delay: float,
         url: str,
         stream: bool,
@@ -76,7 +75,7 @@ class Requester:
 
         try:
             response: Response = callback(url, stream=stream, timeout=timeout, headers=headers)
-        except (Timeout, ConnectionError):
+        except (Timeout, ConnectionError, RetryError):
             logger.debug('Timed out. "%s"', url)
         else:
             if response.status_code == ok:
@@ -117,7 +116,6 @@ class Requester:
     def _fetch(self, session: Session, delay: float, url: str) -> Response:
         return self._request(
             session.get,
-            session,
             delay,
             url,
             stream=False,
@@ -129,7 +127,6 @@ class Requester:
     def _stream(self, session: Session, delay: float, url: str, start: int, end: int) -> Response:
         return self._request(
             session.get,
-            session,
             delay,
             url,
             stream=True,
@@ -141,7 +138,6 @@ class Requester:
     def _head(self, session: Session, delay: float, url: str) -> Response:
         return self._request(
             session.head,
-            session,
             delay,
             url,
             stream=False,

@@ -11,41 +11,41 @@ class Grabber:
     def __init__(self, useragent: str, retries: int = 3) -> None:
         """Set retries to -1 to retry indefinitely"""
 
-        self.robots_parser = RobotsParser(useragent)
-        self.requester = Requester(useragent, retries)
+        self._robots_parser = RobotsParser(useragent)
+        self._requester = Requester(useragent, retries)
 
     def __enter__(self) -> 'Grabber':
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
-        return True
+        return False
 
     @lru_cache(maxsize=8, typed=True)
     def get(self, url: str) -> bytes:
-        parser = self.robots_parser.get_parser(url)
+        parser = self._robots_parser.get_parser(url)
 
-        if not self.robots_parser.can_scrape(parser, url):
+        if not self._robots_parser.can_scrape(parser, url):
             return b''
 
-        delay: float = self.robots_parser.scrape_delay(parser)
-        session: Session = self.requester.session()
+        delay: float = self._robots_parser.scrape_delay(parser)
+        session: Session = self._requester.session()
 
-        return self.requester.fetch(session, url, delay)
+        return self._requester.fetch(session, url, delay)
 
     def download(self, url: str, fp: str) -> bool:
-        parser = self.robots_parser.get_parser(url)
+        parser = self._robots_parser.get_parser(url)
 
-        if not self.robots_parser.can_scrape(parser, url):
+        if not self._robots_parser.can_scrape(parser, url):
             return False
 
-        delay: float = self.robots_parser.scrape_delay(parser)
-        session: Session = self.requester.session()
+        delay: float = self._robots_parser.scrape_delay(parser)
+        session: Session = self._requester.session()
 
         try:
-            content_length: int = self.requester.get_content_length(session, url, delay)
+            content_length: int = self._requester.get_content_length(session, url, delay)
 
             with FileParts(fp, content_length) as file:
-                for offset, chunk in self.requester.stream(session, url, content_length, delay):
+                for offset, chunk in self._requester.stream(session, url, content_length, delay):
                     if offset is None:
                         raise HTTPStreamingError(url, chunk)
 
