@@ -11,6 +11,8 @@ from requests.exceptions import ChunkedEncodingError, ConnectionError, Timeout
 
 from .exception import GrabpyException, HTTPError, HTTPNotFoundError, HTTPTimeoutError
 
+from hanging_threads import start_monitoring
+
 logger = logging.getLogger(__name__)
 stop_streaming = Event()
 
@@ -63,7 +65,7 @@ class Requester:
 
             try:
                 response: Response = callback(url, stream=stream, timeout=timeout, headers=headers)
-            except Timeout:
+            except (Timeout, ConnectionError):
                 retries -= 1
                 delay = (delay + 1) * 2
 
@@ -91,7 +93,6 @@ class Requester:
 
                 yield chunk
         except (ChunkedEncodingError, ConnectionError) as err:
-            logger.exception('%s', err)
             raise
 
     @staticmethod
@@ -130,7 +131,8 @@ class Requester:
                     (10, 60),
                     headers
                 )
-            except HTTPError:
+            except HTTPError as err:
+                logger.error(err)
                 stop_streaming.set()
                 output.put((None, (start, end)))
                 break
@@ -193,6 +195,8 @@ class Requester:
             threads = []
 
             stop_streaming.clear()
+
+            start_monitoring(seconds_frozen=70, test_interval=5)
 
             for i in range(thread_count):
                 t = Thread(target=self._download_worker, args=(results, ranges, chunk_size, url, delay))

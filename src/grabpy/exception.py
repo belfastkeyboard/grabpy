@@ -54,12 +54,19 @@ class HTTPStatusError(HTTPError):
         return f'[{self.url}<code:{self.code}>] {self.message}'
 
 
-class FileNotSeekableError(GrabpyException):
+class FileNotSeekableError(FileError):
     """Exception raised when file.seekable() returns False."""
 
     def __init__(self, file: IO) -> None:
-        super().__init__('Not seekable.')
-        self.file = file
+        super().__init__('Not seekable.', file)
+
+
+class FileDestinationInvalid(FileError):
+    """Exception raised when temp file cannot be moved to desired destination."""
+
+    def __init__(self, file: IO, dest: str) -> None:
+        super().__init__(f'Destination "{dest}" is invalid.', file)
+        self.dest = dest
 
 
 class HTTPTimeoutError(HTTPError):

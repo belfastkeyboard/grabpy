@@ -1,7 +1,7 @@
 import os
 from tempfile import NamedTemporaryFile
 
-from .exception import DiskError, FileNotSeekableError
+from .exception import DiskError, FileNotSeekableError, FileDestinationInvalid
 
 
 class FileParts:
@@ -20,10 +20,13 @@ class FileParts:
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
         self.tmp.close()
 
-        if exc_type is not None:
-            os.remove(self.tmp.name)
-        else:
-            os.replace(self.tmp.name, self.dest)
+        try:
+            if exc_type is not None:
+                os.remove(self.tmp.name)
+            else:
+                os.replace(self.tmp.name, self.dest)
+        except FileNotFoundError:
+            raise FileDestinationInvalid(self.tmp, self.dest)
 
         return False
 
