@@ -3,7 +3,7 @@ from functools import lru_cache
 
 from .exception import GrabpyException, HTTPStreamingError
 from .io import FileParts
-from .request import Requester
+from .request import Requester, Session
 from .robots import RobotsParser
 
 
@@ -12,7 +12,7 @@ class Grabber:
         """Set retries to -1 to retry indefinitely"""
 
         self.robots_parser = RobotsParser(useragent)
-        self.requester = Requester(retries)
+        self.requester = Requester(useragent, retries)
 
     def __enter__(self) -> 'Grabber':
         return self
@@ -28,8 +28,9 @@ class Grabber:
             return b''
 
         delay: float = self.robots_parser.scrape_delay(parser)
+        session: Session = self.requester.session()
 
-        return self.requester.fetch(url, delay=delay)
+        return self.requester.fetch(session, url, delay)
 
     def download(self, url: str, fp: str) -> bool:
         parser = self.robots_parser.get_parser(url)
@@ -38,12 +39,13 @@ class Grabber:
             return False
 
         delay: float = self.robots_parser.scrape_delay(parser)
+        session: Session = self.requester.session()
 
         try:
-            content_length: int = self.requester.get_content_length(url, delay)
+            content_length: int = self.requester.get_content_length(session, url, delay)
 
             with FileParts(fp, content_length) as file:
-                for offset, chunk in self.requester.stream(url, content_length, delay):
+                for offset, chunk in self.requester.stream(session, url, content_length, delay):
                     if offset is None:
                         raise HTTPStreamingError(url, chunk)
 

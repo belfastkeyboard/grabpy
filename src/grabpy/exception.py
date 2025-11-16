@@ -65,8 +65,11 @@ class FileDestinationInvalid(FileError):
     """Exception raised when temp file cannot be moved to desired destination."""
 
     def __init__(self, file: IO, dest: str) -> None:
-        super().__init__(f'Destination "{dest}" is invalid.', file)
+        super().__init__(f'Destination is invalid.', file)
         self.dest = dest
+
+    def __str__(self) -> str:
+        return f'[{self.dest}] {self.message}'
 
 
 class HTTPTimeoutError(HTTPError):
