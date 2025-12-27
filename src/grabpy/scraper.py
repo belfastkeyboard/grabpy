@@ -7,6 +7,13 @@ from .request import Requester, Session
 from .robots import RobotsParser
 
 
+class DisallowedError(Exception):
+    def __init__(self, url: str, user_agent: str):
+        super().__init__(f"Access to {url} disallowed by robots.txt")
+        self.url = url
+        self.user_agent = user_agent
+
+
 class Grabber:
     def __init__(self, useragent: str, retries: int = 3) -> None:
         """Set retries to -1 to retry indefinitely"""
@@ -25,7 +32,7 @@ class Grabber:
         parser = self._robots_parser.get_parser(url)
 
         if not self._robots_parser.can_scrape(parser, url):
-            return b''
+            raise DisallowedError(url, self._robots_parser.useragent)
 
         delay: float = self._robots_parser.scrape_delay(parser)
         session: Session = self._requester.session()
@@ -36,7 +43,7 @@ class Grabber:
         parser = self._robots_parser.get_parser(url)
 
         if not self._robots_parser.can_scrape(parser, url):
-            return False
+            raise DisallowedError(url, self._robots_parser.useragent)
 
         delay: float = self._robots_parser.scrape_delay(parser)
         session: Session = self._requester.session()
